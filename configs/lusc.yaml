@@ -1,0 +1,34 @@
+# LUSC — Lung Squamous Cell Carcinoma
+# Encoder: UNI2-h (1536-dim patch embeddings)
+# Patients (EC2 full run): 501
+
+cancer: lusc
+
+# ── Data paths ────────────────────────────────────────────────────────────────
+uni_dir: /home/ubuntu/tangle_data/lusc
+gene_csv_paths:
+  - /home/ubuntu/tcga_lusc_data/histology_gene_train.csv
+  - /home/ubuntu/tcga_lusc_data/histology_gene_val.csv
+subtype_csv_paths: []
+save_dir: results_singlehead/lusc
+
+# ── Model ─────────────────────────────────────────────────────────────────────
+image_dim:   1536    # UNI2-h
+fusion_type: attention
+dropout:     0.3
+
+# ── Gene preprocessing ────────────────────────────────────────────────────────
+n_top_genes: 20000
+
+# ── Training ──────────────────────────────────────────────────────────────────
+epochs:      200
+batch_size:  32
+lr:          1.0e-3
+weight_decay: 1.0e-4
+val_fraction:  0.15
+test_fraction: 0.10
+seed:        42
+
+# ── Loss weights ──────────────────────────────────────────────────────────────
+loss_weights:
+  survival: 1.0
