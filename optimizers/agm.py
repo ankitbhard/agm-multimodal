@@ -44,7 +44,19 @@ Usage:
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from typing import Dict, List, Optional
+
+
+def _cox_loss(risk_scores: torch.Tensor,
+              os_months: torch.Tensor,
+              vital_status: torch.Tensor) -> torch.Tensor:
+    """Mini-batch Cox negative partial log-likelihood."""
+    order       = torch.argsort(os_months, descending=True)
+    risk        = risk_scores[order]
+    events      = vital_status[order].float()
+    log_cum_sum = torch.logcumsumexp(risk, dim=0)
+    return -torch.mean((risk - log_cum_sum) * events)
 
 
 class AGMWrapper:
@@ -95,14 +107,20 @@ class AGMWrapper:
                                inputs: Dict[str, torch.Tensor],
                                labels: Dict[str, torch.Tensor]) -> Dict[str, float]:
         """
-        Estimate each modality's contribution via unimodal forward passes
-        (all other modality inputs zeroed).  Returns normalised contributions
-        summing to 1.
+        Estimate per-modality contribution via unimodal Cox loss.
+        Zeros out all modalities except the one being evaluated.
+        Lower Cox loss = higher contribution (uses inverse loss).
+        Returns normalised contributions summing to 1.
+
+        Falls back to cross-entropy on binary survival label if Cox labels
+        (os_months, vital_status) are not available in the label dict.
         """
         self.model.eval()
         contributions: Dict[str, float] = {}
 
-        surv_labels = labels.get("survival") if isinstance(labels, dict) else labels
+        os_m = labels["os_months"].float()    if "os_months"    in labels else None
+        vs   = labels["vital_status"].float() if "vital_status" in labels else None
+        use_cox = os_m is not None and vs is not None and vs.sum() > 0
 
         for modality in self.modality_names:
             uni_input = {
@@ -111,9 +129,16 @@ class AGMWrapper:
             }
             out    = self.model(uni_input)
             logits = out["survival"] if isinstance(out, dict) else out
-            preds  = logits.argmax(dim=1)
-            acc    = (preds == surv_labels).float().mean().item()
-            contributions[modality] = acc
+
+            if use_cox:
+                risk = logits[:, 1]
+                loss = _cox_loss(risk, os_m, vs)
+            else:
+                surv_labels = labels.get("survival") if isinstance(labels, dict) else labels
+                loss = F.cross_entropy(logits, surv_labels)
+
+            # Inverse loss: lower loss → higher contribution
+            contributions[modality] = 1.0 / (loss.item() + 1e-8)
 
         self.model.train()
 
